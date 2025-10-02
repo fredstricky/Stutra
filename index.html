@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stutra — Study Time Tracker</title>
+  <meta name="description" content="Track study time by subject. Stopwatch & timer. Daily, monthly, and yearly stats. Add friends & see activity." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⌛</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script defer src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.error)); }
+  </script>
+  <style>[x-cloak]{display:none!important}</style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <div class="max-w-6xl mx-auto p-4" x-data="stutra()" x-init="init()">
+    <header class="flex items-center justify-between mb-4">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-bold">Stutra</h1>
+        <p class="text-zinc-400 text-sm">Study time tracker — subjects, timers, stats, friends.</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="text-right">
+          <div class="text-sm text-zinc-300">Signed in as</div>
+          <div class="font-semibold" x-text="me.username || 'Guest'"></div>
+        </div>
+        <button class="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700" @click="openAccountModal()">Account</button>
+      </div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="mb-4 flex gap-2 flex-wrap">
+      <template x-for="t in tabs" :key="t">
+        <button @click="tab=t" class="px-3 py-2 rounded-xl"
+          :class="tab===t ? 'bg-blue-600' : 'bg-zinc-800 hover:bg-zinc-700'"
+          x-text="t"></button>
+      </template>
+    </nav>
+
+    <!-- MOTIVATION BANNER -->
+    <div class="mb-4 p-3 rounded-xl bg-emerald-900/30 border border-emerald-800 text-emerald-200" x-text="motivation"></div>
+
+    <!-- DASHBOARD / TODAY -->
+    <section x-show="tab==='Today'" x-cloak class="space-y-4">
+      <div class="grid md:grid-cols-3 gap-4">
+        <div class="md:col-span-2 p-4 rounded-2xl bg-zinc-900">
+          <h2 class="font-semibold mb-3">Timer</h2>
+          <div class="flex flex-wrap gap-2 items-center mb-3">
+            <select class="px-3 py-2 rounded-xl bg-zinc-800" x-model="timer.subjectId">
+              <option value="">Select subject…</option>
+              <template x-for="s in subjects" :key="s.id">
+                <option :value="s.id" x-text="s.name"></option>
+              </template>
+            </select>
+            <select class="px-3 py-2 rounded-xl bg-zinc-800" x-model="timer.mode">
+              <option value="stopwatch">Stopwatch</option>
+              <option value="countdown">Timer</option>
+            </select>
+            <input x-show="timer.mode==='countdown'" x-cloak type="number" min="1" class="w-28 px-3 py-2 rounded-xl bg-zinc-800" placeholder="Minutes" x-model.number="timer.countdownMins">
+            <button class="px-3 py-2 rounded-xl bg-emerald-600 disabled:opacity-50" :disabled="!timer.subjectId || running" @click="start()">Start</button>
+            <button class="px-3 py-2 rounded-xl bg-amber-600 disabled:opacity-50" :disabled="!running" @click="pause()">Pause</button>
+            <button class="px-3 py-2 rounded-xl bg-rose-700 disabled:opacity-50" :disabled="!running && elapsed===0" @click="stopAndSave()">Stop & Save</button>
+            <div class="ml-auto text-3xl font-mono" x-text="formatElapsed(elapsed)"></div>
+          </div>
+        </div>
+        <div class="p-4 rounded-2xl bg-zinc-900">
+          <h2 class="font-semibold mb-3">Subjects</h2>
+          <div class="flex gap-2 mb-2">
+            <input class="flex-1 px-3 py-2 rounded-xl bg-zinc-800" placeholder="Add subject…" x-model="newSubject" @keydown.enter="addSubject()">
+            <button class="px-3 py-2 rounded-xl bg-blue-600" @click="addSubject()">Add</button>
+          </div>
+          <ul class="space-y-1 max-h-60 overflow-auto pr-1">
+            <template x-for="s in subjects" :key="s.id">
+              <li class="flex items-center justify-between px-3 py-2 rounded-xl bg-zinc-800">
+                <span x-text="s.name"></span>
+                <button class="text-xs px-2 py-1 rounded-lg bg-red-700" @click="deleteSubject(s.id)">Delete</button>
+              </li>
+            </template>
+          </ul>
+        </div>
+      </div>
+
+      <div class="p-4 rounded-2xl bg-zinc-900">
+        <h2 class="font-semibold mb-3">Today’s totals</h2>
+        <div class="grid md:grid-cols-3 gap-3">
+          <template x-for="row in todaysTotals()" :key="row.subjectId">
+            <div class="p-3 rounded-xl bg-zinc-800">
+              <div class="text-sm text-zinc-400" x-text="row.subjectName"></div>
+              <div class="text-xl font-semibold" x-text="formatMinutes(row.minutes)"></div>
+            </div>
+          </template>
+        </div>
+        <h3 class="mt-4 font-semibold">Recent sessions</h3>
+        <ul class="mt-2 space-y-2 max-h-64 overflow-auto pr-1">
+          <template x-for="sess in recentMySessions()" :key="sess.id">
+            <li class="p-3 rounded-xl bg-zinc-800">
+              <div class="text-sm text-zinc-400" x-text="formatDateTime(sess.start)+' → '+formatDateTime(sess.end)"></div>
+              <div><span class="font-semibold" x-text="subjectName(sess.subjectId)"></span> • <span x-text="formatMinutes(Math.round(sess.duration/60))"></span></div>
+            </li>
+          </template>
+        </ul>
+      </div>
+    </section>
+
+    <!-- MONTH -->
+    <section x-show="tab==='Month'" x-cloak class="space-y-4">
+      <div class="p-4 rounded-2xl bg-zinc-900">
+        <h2 class="font-semibold mb-3">This month</h2>
+        <div class="h-64"><canvas id="monthChart"></canvas></div>
+      </div>
+      <div class="p-4 rounded-2xl bg-zinc-900">
+        <h3 class="font-semibold mb-2">By subject (month)</h3>
+        <div class="grid md:grid-cols-3 gap-3">
+          <template x-for="row in monthTotalsBySubject()" :key="row.subjectId">
+            <div class="p-3 rounded-xl bg-zinc-800">
+              <div class="text-sm text-zinc-400" x-text="row.subjectName"></div>
+              <div class="text-xl font-semibold" x-text="formatMinutes(row.minutes)"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- YEAR -->
+    <section x-show="tab==='Year'" x-cloak class="space-y-4">
+      <div class="p-4 rounded-2xl bg-zinc-900">
+        <h2 class="font-semibold mb-3">This year</h2>
+        <div class="h-64"><canvas id="yearChart"></canvas></div>
+      </div>
+    </section>
+
+    <!-- FRIENDS -->
+    <section x-show="tab==='Friends'" x-cloak class="space-y-4">
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="p-4 rounded-2xl bg-zinc-900">
+          <h2 class="font-semibold mb-3">Your share code</h2>
+          <p class="text-sm text-zinc-400 mb-2">Give this code to a friend. It includes your username and recent study stats (last 30 days).</p>
+          <textarea readonly class="w-full h-32 px-3 py-2 rounded-xl bg-zinc-800 select-all" x-text="exportShareCode()"></textarea>
+        </div>
+        <div class="p-4 rounded-2xl bg-zinc-900">
+          <h2 class="font-semibold mb-3">Add a friend</h2>
+          <textarea placeholder="Paste friend’s share code here" class="w-full h-24 px-3 py-2 rounded-xl bg-zinc-800" x-model="friendCode"></textarea>
+          <div class="mt-2 flex gap-2">
+            <button class="px-3 py-2 rounded-xl bg-blue-600" @click="importFriend()">Add friend</button>
+            <div class="text-sm text-zinc-400" x-text="friendImportMsg"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-4 rounded-2xl bg-zinc-900">
+        <h2 class="font-semibold mb-3">Friends</h2>
+        <ul class="space-y-2">
+          <template x-for="f in friends" :key="f.id">
+            <li class="p-3 rounded-xl bg-zinc-800 flex items-center justify-between">
+              <div>
+                <div class="font-semibold" x-text="f.username"></div>
+                <div class="text-sm text-zinc-400" x-text="'Last 7 days: '+formatMinutes(totalMinutesRange(f.sessions, 7))"></div>
+              </div>
+              <button class="px-3 py-2 rounded-xl bg-zinc-700" @click="viewFriend(f)">View profile</button>
+            </li>
+          </template>
+        </ul>
+      </div>
+
+      <div class="p-4 rounded-2xl bg-zinc-900">
+        <h2 class="font-semibold mb-3">Friends activity</h2>
+        <ul class="space-y-2 max-h-96 overflow-auto pr-1">
+          <template x-for="act in friendsActivity()" :key="act.id">
+            <li class="p-3 rounded-xl bg-zinc-800">
+              <div class="text-sm text-zinc-400" x-text="formatDateTime(act.start)"></div>
+              <div><span class="font-semibold" x-text="act.username"></span> studied <span class="font-semibold" x-text="act.subjectName"></span> for <span x-text="formatMinutes(Math.round(act.duration/60))"></span></div>
+            </li>
+          </template>
+        </ul>
+      </div>
+    </section>
+
+    <!-- FRIEND PROFILE MODAL -->
+    <div x-show="showFriendModal" x-cloak class="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
+      <div class="bg-zinc-900 rounded-2xl p-4 max-w-xl w-full">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-semibold" x-text="friendModalData?.username || 'Friend'"></h3>
+          <button class="px-2 py-1 rounded-lg bg-zinc-800" @click="showFriendModal=false">Close</button>
+        </div>
+        <p class="text-sm text-zinc-400 mb-3">Recent totals</p>
+        <ul class="space-y-2 max-h-72 overflow-auto pr-1">
+          <template x-for="row in friendTotals(friendModalData)" :key="row.subjectName">
+            <li class="p-3 rounded-xl bg-zinc-800 flex items-center justify-between">
+              <span x-text="row.subjectName"></span>
+              <span class="font-semibold" x-text="formatMinutes(row.minutes)"></span>
+            </li>
+          </template>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ACCOUNT MODAL -->
+    <div x-show="showAccount" x-cloak class="fixed inset-0 bg-black/60 flex items-center justify-center p-4">
+      <div class="bg-zinc-900 rounded-2xl p-4 max-w-md w-full">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-semibold">Account</h3>
+          <button class="px-2 py-1 rounded-lg bg-zinc-800" @click="showAccount=false">Close</button>
+        </div>
+        <label class="block mb-2 text-sm text-zinc-300">Username</label>
+        <input class="w-full px-3 py-2 rounded-xl bg-zinc-800" x-model="me.username" placeholder="Your name or alias">
+        <div class="mt-3 text-sm text-zinc-400 break-all">User ID: <span x-text="me.id"></span></div>
+        <div class="mt-4 flex justify-end">
+          <button class="px-3 py-2 rounded-xl bg-blue-600" @click="saveAccount()">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="text-center text-zinc-500 text-sm mt-10">
+      <p>Stutra — Data saved on this device. Share code includes only recent stats (last 30 days).</p>
+    </footer>
+  </div>
+</body>
+</html>
