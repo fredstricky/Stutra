@@ -9,6 +9,11 @@ const MOTIVATIONS=[
   "Deep work starts with a single minute."
 ];
 
+function randomColor(){
+  const hue=Math.floor(Math.random()*360);
+  return `hsl(${hue} 80% 60%)`;
+}
+
 function load(){try{const raw=localStorage.getItem(STORAGE_KEY);return raw?JSON.parse(raw):null}catch{return null}}
 function save(state){localStorage.setItem(STORAGE_KEY, JSON.stringify(state))}
 function startOfMonth(d=new Date()){return new Date(d.getFullYear(), d.getMonth(), 1)}
@@ -26,7 +31,20 @@ function defaultState(){
 
 function stutraCharts(){
   return {
-    monthChart:null, yearChart:null,
+    monthChart:null, yearChart:null, todayChart:null,
+    renderToday(data){
+      const ctx=document.getElementById('todayChart');
+      if(!ctx) return;
+      const labels=data.map(x=>x.subjectName);
+      const mins=data.map(x=>x.minutes);
+      const colors=data.map(x=>x.color||'#2563eb');
+      if(this.todayChart){ this.todayChart.destroy() }
+      this.todayChart=new Chart(ctx, {
+        type:'bar',
+        data:{labels, datasets:[{label:'Minutes', data:mins, backgroundColor:colors, borderColor:colors, borderWidth:1}]},
+        options:{responsive:true, maintainAspectRatio:false, indexAxis:'y', plugins:{legend:{display:false}}, scales:{x:{ticks:{precision:0}, title:{display:true, text:'Minutes'}}}}
+      });
+    },
     renderMonth(data){
       const ctx=document.getElementById('monthChart');
       const labels=data.map(x=>x.label);
@@ -55,6 +73,7 @@ function stutra(){
     charts:stutraCharts(),
     // UI state
     newSubject:'',
+    newSubjectColor:randomColor(),
     timer:{mode:'stopwatch', subjectId:'', countdownMins:25},
     running:false, startTs:0, elapsed:0, ticker:null,
     showAccount:false, showFriendModal:false, friendModalData:null, friendCode:'', friendImportMsg:'',
@@ -65,7 +84,8 @@ function stutra(){
       Object.assign(this, s);
       // ensure structure
       this.me=this.me||{id:uid(),username:''};
-      this.subjects=this.subjects||[]; this.sessions=this.sessions||[]; this.friends=this.friends||[];
+      this.subjects=(this.subjects||[]).map(sub=>({...sub, color: sub.color||randomColor()}));
+      this.sessions=this.sessions||[]; this.friends=this.friends||[];
       save(this.snapshot());
       queueMicrotask(()=>{ this.refreshCharts() });
       document.addEventListener('visibilitychange', ()=>{ if(document.hidden && this.running) this.pause() });
@@ -80,7 +100,10 @@ function stutra(){
     // Subjects
     addSubject(){
       const name=this.newSubject.trim(); if(!name) return;
-      this.subjects.push({id:uid(), name}); this.newSubject=''; this.persist();
+      const color=this.newSubjectColor||randomColor();
+      this.subjects.push({id:uid(), name, color});
+      this.newSubject=''; this.newSubjectColor=randomColor();
+      this.persist();
     },
     deleteSubject(id){
       if(!confirm('Delete subject?')) return;
@@ -90,6 +113,7 @@ function stutra(){
       this.persist(); this.refreshCharts();
     },
     subjectName(id){ const s=this.subjects.find(x=>x.id===id); return s? s.name : 'Unknown' },
+    subjectColor(id){ const s=this.subjects.find(x=>x.id===id); return s? s.color || '#2563eb' : '#2563eb' },
 
     // Timer
     start(){
@@ -140,12 +164,14 @@ function stutra(){
           map.set(s.subjectId, (map.get(s.subjectId)||0)+mins);
         }
       }
-      return Array.from(map.entries()).map(([subjectId, minutes])=>({subjectId, subjectName:this.subjectName(subjectId), minutes})).sort((a,b)=>b.minutes-a.minutes);
+      return Array.from(map.entries()).map(([subjectId, minutes])=>({subjectId, subjectName:this.subjectName(subjectId), minutes, color:this.subjectColor(subjectId)})).sort((a,b)=>b.minutes-a.minutes);
     },
     recentMySessions(){ return this.sessions.slice().sort((a,b)=>b.start-a.start).slice(0,20) },
 
     // Month & Year charts
     refreshCharts(){
+      this.charts.renderToday(this.todaysTotals());
+
       const now=new Date();
       // month per day
       const daysInMonth=new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
